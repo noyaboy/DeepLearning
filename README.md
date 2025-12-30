@@ -1,5 +1,6 @@
 # Deep Learning Course
 
+陽明交通大學 IEE535223 電子碩 張添烜教授
 This repository contains implementations, reports, and materials for a Deep Learning course (Labs 1-5) and a final team project.
 
 ## Repository Structure
