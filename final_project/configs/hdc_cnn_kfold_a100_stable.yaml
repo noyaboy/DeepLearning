@@ -1,0 +1,162 @@
+# HDC-CNN K-Fold CV Configuration - V100/A100 Compatible
+# Conservative settings for V100 and A100 hardware
+#
+# Performance Characteristics:
+# - Batch size: 40 (conservative, ~2-3GB VRAM)
+# - Time per epoch: ~60-90 seconds
+# - Time per model: ~20-30 minutes (with early stopping)
+# - Total training time: ~3.5-5 hours for 10 models
+#
+# Stability Features:
+# - No torch.compile (eliminates compilation issues)
+# - Early stopping (prevents overtraining)
+# - Conservative batch size (safe for V100 16GB)
+
+data:
+  data_dir: "../public_data/"
+  use_public_dataset: true
+  img_height: 1424
+  img_width: 176
+
+  # K-Fold CV Configuration
+  n_folds: 5   # Number of cross-validation folds
+  n_repeats: 2  # Two repeats (10 models total)
+
+  # Normalization Strategy - DECISION #1: GLOBAL
+  use_global_normalization: true  # Compute once on full training set, use for all folds
+
+  # Seeds
+  split_seed: 42  # Base seed for K-fold splits
+  noise_seed: 123  # Seed for noise application
+
+  max_cosmologies: null  # Full training on all 101 cosmologies
+
+model:
+  name: "hdc_cnn"
+  # HDC-CNN uses fixed architecture from model_description.txt
+  # ~202K parameters
+
+training:
+  batch_size: 36  # Reduced for memory safety
+  # VRAM usage: ~1.8-2.7GB (very safe for V100 16GB)
+
+  epochs: 40  # Maximum epochs (early stopping will terminate earlier)
+
+  # Warmstart Phase: MSE + Frozen Cov Head
+  warmstart:
+    enabled: false  # DISABLED per plan.txt - no MSE warmup phase
+    epochs: 0  # No warmstart
+
+  optimizer:
+    type: "adamw"
+    lr: 0.000168  # Base LR: max_lr/div_factor = 0.0042/25 = 0.000168 (aligned with OneCycle)
+    weight_decay: 0.0005  # Backbone only
+    betas: [0.9, 0.999]
+
+    # Main phase settings (after warmstart)
+    mean_head_lr_mult: 1.5  # 1.5× LR for mean_head
+    mean_head_wd: 0.0       # No weight decay on mean_head
+    cov_head_lr_mult: 0.7   # 0.7× LR for cov_head
+    cov_head_wd: 0.0        # No weight decay on cov_head
+
+    warmup_epochs: 0  # No separate warmup (OneCycle handles warmup via pct_start)
+
+  scheduler:
+    type: "onecycle"
+    epochs: 40  # Total epochs for OneCycleLR calculation
+    max_lr: [0.0063, 0.00294, 0.0042, 0.0042]  # [mean_head, cov_head, no_decay, backbone]
+    # Calculation: backbone = 0.0042 (base)
+    # mean_head = 0.0042 × 1.5 = 0.0063
+    # cov_head  = 0.0042 × 0.7 = 0.00294
+    # no_decay  = 0.0042 × 1.0 = 0.0042
+    pct_start: 0.15  # 15% of training for warmup (per plan.txt: 0.1-0.2)
+    div_factor: 25.0  # initial_lr = max_lr / div_factor
+    final_div_factor: 1000.0  # final_lr = initial_lr / final_div_factor (increased per plan.txt)
+    anneal_strategy: "cos"  # Cosine annealing
+    # Old ReduceLROnPlateau params (ignored by OneCycleLR, kept for reference)
+    # factor: 0.5
+    # patience: 3
+    # min_lr: 1.0e-6
+    # mode: "max"
+
+  # β-NLL Loss Configuration
+  loss: "beta_nll"  # Beta-weighted negative log-likelihood
+  loss_params:
+    beta: 0.3  # Fixed beta=0.3 throughout training (no scheduling)
+    lambda_train: 0.0  # Fixed lambda_train=0 throughout training (no MSE penalty)
+    sigma_min: 0.005  # Minimum std to prevent collapse
+    eps: 1.0e-6  # Numerical stability
+
+  # β-schedule configuration
+  beta_schedule:
+    enabled: false  # DISABLED - using constant beta=0.3
+    warmup_epochs: 5     # (unused)
+    rampup_epochs: 5     # (unused)
+    target_beta: 0.3     # (unused)
+
+  # λ_train schedule configuration (MSE penalty)
+  lambda_train_schedule:
+    enabled: false  # DISABLED - using constant lambda_train=0
+    start_epoch: 20      # (unused)
+    rampup_epochs: 10    # (unused)
+    target_lambda: 50.0  # (unused)
+
+  # EMA Configuration
+  use_ema: true  # Enabled
+  ema_decay: 0.999  # Effective window ~1,000 steps
+  use_sma: false  # Disabled (no SMA)
+
+  # SWA Configuration
+  swa:
+    enabled: false
+    n_average: 10  # Average last 10 checkpoints
+    start_epoch: 30  # Start SWA from epoch 30
+    use_cyclical_lr: true  # Use SWALR with cosine annealing
+    swa_lr: 0.0001  # Lower LR for SWA phase
+    anneal_epochs: 5  # Epochs for cosine annealing cycle
+    anneal_strategy: 'cos'  # Cosine annealing
+
+  # AMP and memory optimization
+  use_amp: true
+  amp_dtype: "float16"  # V100/A100 compatible (bfloat16 only on A100)
+  grad_clip_max_norm: 1.0
+  use_checkpointing: true  # Required for HDC-CNN architecture
+
+  # PyTorch Optimization
+  use_compile: false  # DISABLED for stability
+
+  callbacks:
+    early_stopping:
+      enabled: true  # ENABLED
+      patience: 17   # Increased per plan.txt (was 7)
+      monitor: "val_competition_score"
+      mode: "max"    # Maximize score
+      min_delta: 0.0001  # Minimum improvement threshold
+    checkpoint:
+      enabled: true
+      monitor: "val_competition_score"
+      mode: "max"
+      save_scalers: true  # Save image_scaler and label_scaler with checkpoint
+    logging:
+      enabled: true
+      log_every: 1  # Log every epoch
+
+evaluation:
+  metrics: ["competition_score", "mse"]
+  plot_scatter: true
+
+paths:
+  output_dir: "outputs/hdc_cnn_kfold_a100_stable/"
+  checkpoint_dir: "checkpoints/hdc_cnn_kfold_a100_stable/"
+  submission_dir: "submissions/"
+  log_dir: "logs/hdc_cnn_kfold_a100_stable/"
+  oof_dir: "outputs/hdc_cnn_kfold_a100_stable/oof/"
+  test_pred_dir: "outputs/hdc_cnn_kfold_a100_stable/infer_test/"
+  val_summary_dir: "outputs/hdc_cnn_kfold_a100_stable/val_summary/"
+
+reproducibility:
+  seed: 42
+  deterministic: true
+  benchmark: false  # Keep false for reproducibility
+
+device: "cuda"
