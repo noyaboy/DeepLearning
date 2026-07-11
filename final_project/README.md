@@ -1,4 +1,4 @@
-# Final Project: HDC-CNN for HMS - Harmful Brain Activity Classification
+# Final Project: HDC-CNN for the NeurIPS 2025 FAIR Universe Weak Lensing Uncertainty Challenge
 
 ## Team 14
 
@@ -15,7 +15,7 @@
 
 ## Project Overview
 
-HDC-CNN (Hierarchical Deep CNN) implementation for the HMS - Harmful Brain Activity Classification Kaggle competition.
+HDC-CNN implementation for the NeurIPS 2025 FAIR Universe Weak Lensing Uncertainty Challenge — inferring cosmological parameters (Omega_m, sigma_8) with uncertainty quantification from weak-lensing convergence maps.
 
 ### Key Features
 
